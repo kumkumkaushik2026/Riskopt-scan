@@ -6,30 +6,42 @@ import {
   useContext,
   useMemo,
   useState,
+  type ReactNode,
 } from "react"
 
 import {
   ORGANIZATIONS,
-  getOverview,
   type Objective,
   type OrgNotification,
   type Organization,
   type OrganizationAssessment,
+  type WebsiteAssessmentFinding,
   buildOrganizationFromAssessment,
   buildOrganizationFromWebsiteAssessment,
-  type WebsiteAssessmentFinding,
 } from "@/lib/data"
 
-import { runOptimization, type OptimizationResult } from "@/lib/optimizer"
+import {
+  runOptimization,
+  type OptimizationResult,
+} from "@/lib/optimizer"
+
 import { findingsToRisks } from "@/lib/risk-interpreter"
 
 interface AppStateValue {
   org: Organization
   orgId: string
   organizations: Organization[]
+
   setOrgId: (id: string) => void
   addOrganization: (assessment: OrganizationAssessment) => void
-  addWebsiteOrganization: (args: { name: string; budget: number; score: number; estimatedExposure: number; findings: WebsiteAssessmentFinding[] }) => void
+
+  addWebsiteOrganization: (args: {
+    name: string
+    budget: number
+    score: number
+    estimatedExposure: number
+    findings: WebsiteAssessmentFinding[]
+  }) => void
 
   budget: number
   setBudget: (value: number) => void
@@ -39,17 +51,18 @@ interface AppStateValue {
 
   running: boolean
   hasRun: boolean
+
   result: OptimizationResult | null
   runOptimizer: () => void
 
   notifications: OrgNotification[]
   unreadCount: number
+
   markNotificationRead: (id: string) => void
   markAllNotificationsRead: () => void
 }
 
-const AppStateContext =
-  createContext<AppStateValue | null>(null)
+const AppStateContext = createContext<AppStateValue | null>(null)
 
 export function useAppState(): AppStateValue {
   const ctx = useContext(AppStateContext)
@@ -66,18 +79,18 @@ export function useAppState(): AppStateValue {
 export function AppStateProvider({
   children,
 }: {
-  children: React.ReactNode
+  children: ReactNode
 }) {
-  const [customOrgs, setCustomOrgs] =
-    useState<Organization[]>([])
+  const [customOrgs, setCustomOrgs] = useState<Organization[]>([])
 
   const organizations = useMemo(
     () => [...ORGANIZATIONS, ...customOrgs],
     [customOrgs],
   )
 
-  const [orgId, setOrgIdState] =
-    useState<string>(ORGANIZATIONS[0].id)
+  const [orgId, setOrgIdState] = useState<string>(
+    ORGANIZATIONS[0]?.id ?? "",
+  )
 
   const org = useMemo(
     () =>
@@ -87,41 +100,37 @@ export function AppStateProvider({
     [organizations, orgId],
   )
 
-  const [budget, setBudgetState] =
-    useState<number>(
-      ORGANIZATIONS[0].budgetDefault,
-    )
+  const [budget, setBudgetState] = useState<number>(
+    ORGANIZATIONS[0]?.budgetDefault ?? 0,
+  )
 
   const [objective, setObjectiveState] =
     useState<Objective>("max-reduction")
 
-  const [running, setRunning] =
-    useState(false)
+  const [running, setRunning] = useState(false)
 
-  const [hasRun, setHasRun] =
-    useState(false)
+  const [hasRun, setHasRun] = useState(false)
 
   const [backendResult, setBackendResult] =
     useState<OptimizationResult | null>(null)
 
   const [notifState, setNotifState] =
-    useState<Record<string, OrgNotification[]>>(
-      () => {
-        const initial: Record<
-          string,
-          OrgNotification[]
-        > = {}
+    useState<Record<string, OrgNotification[]>>(() => {
+      const initial: Record<
+        string,
+        OrgNotification[]
+      > = {}
 
-        for (const o of ORGANIZATIONS) {
-          initial[o.id] =
-            o.notifications.map((n) => ({
-              ...n,
-            }))
-        }
+      for (const o of ORGANIZATIONS) {
+        initial[o.id] = o.notifications.map(
+          (n) => ({
+            ...n,
+          }),
+        )
+      }
 
-        return initial
-      },
-    )
+      return initial
+    })
 
   const setOrgId = useCallback(
     (id: string) => {
@@ -132,6 +141,10 @@ export function AppStateProvider({
           (o) => o.id === id,
         ) ?? ORGANIZATIONS[0]
 
+      if (!next) {
+        return
+      }
+
       setBudgetState(next.budgetDefault)
       setHasRun(false)
       setBackendResult(null)
@@ -139,66 +152,111 @@ export function AppStateProvider({
     [organizations],
   )
 
-  const addOrganization =
-    useCallback(
-      (
-        assessment: OrganizationAssessment,
-      ) => {
-        const next =
-          buildOrganizationFromAssessment(
-            assessment,
-          )
-
-        setCustomOrgs((prev) => [
-          ...prev.filter(
-            (o) => o.id !== next.id,
-          ),
-          next,
-        ])
-
-        setNotifState((prev) => ({
-          ...prev,
-          [next.id]:
-            next.notifications.map(
-              (n) => ({ ...n }),
-            ),
-        }))
-
-        setOrgIdState(next.id)
-        setBudgetState(next.budgetDefault)
-        setObjectiveState(
-          assessment.objective,
+  const addOrganization = useCallback(
+    (assessment: OrganizationAssessment) => {
+      const next =
+        buildOrganizationFromAssessment(
+          assessment,
         )
-        setHasRun(false)
-        setBackendResult(null)
-      },
-      [],
-    )
 
-  const addWebsiteOrganization = useCallback((args: { name: string; budget: number; score: number; estimatedExposure: number; findings: WebsiteAssessmentFinding[] }) => {
-    const next = buildOrganizationFromWebsiteAssessment(args)
-    const interpretedRisks = findingsToRisks(
-      args.findings.map((f) => ({
-        id: f.id,
-        title: f.title,
-        detail: f.detail,
-        severity: f.severity,
-        evidence: f.detail,
-        recommendedControlIds: [f.recommendedControl],
-      })),
-      next.controls,
-      args.estimatedExposure,
-      `Public website · ${args.name}`,
-    )
-    const nextWithIntelligence = { ...next, risks: interpretedRisks.length ? interpretedRisks : next.risks }
-    setCustomOrgs((prev) => [...prev.filter((o) => o.id !== nextWithIntelligence.id), nextWithIntelligence])
-    setNotifState((prev) => ({ ...prev, [nextWithIntelligence.id]: nextWithIntelligence.notifications.map((n) => ({ ...n })) }))
-    setOrgIdState(nextWithIntelligence.id)
-    setBudgetState(nextWithIntelligence.budgetDefault)
-    setObjectiveState("max-reduction")
-    setHasRun(false)
-    setBackendResult(null)
-  }, [])
+      setCustomOrgs((prev) => [
+        ...prev.filter(
+          (o) => o.id !== next.id,
+        ),
+        next,
+      ])
+
+      setNotifState((prev) => ({
+        ...prev,
+        [next.id]: next.notifications.map(
+          (n) => ({
+            ...n,
+          }),
+        ),
+      }))
+
+      setOrgIdState(next.id)
+      setBudgetState(next.budgetDefault)
+      setObjectiveState(
+        assessment.objective,
+      )
+      setHasRun(false)
+      setBackendResult(null)
+    },
+    [],
+  )
+
+  const addWebsiteOrganization = useCallback(
+    (args: {
+      name: string
+      budget: number
+      score: number
+      estimatedExposure: number
+      findings: WebsiteAssessmentFinding[]
+    }) => {
+      const next =
+        buildOrganizationFromWebsiteAssessment(
+          args,
+        )
+
+      const interpretedRisks =
+        findingsToRisks(
+          args.findings.map((f) => ({
+            id: f.id,
+            title: f.title,
+            detail: f.detail,
+            severity: f.severity,
+            evidence: f.detail,
+            recommendedControlIds: [
+              f.recommendedControl,
+            ],
+          })),
+          next.controls,
+          args.estimatedExposure,
+          `Public website · ${args.name}`,
+        )
+
+      const nextWithIntelligence = {
+        ...next,
+        risks:
+          interpretedRisks.length > 0
+            ? interpretedRisks
+            : next.risks,
+      }
+
+      setCustomOrgs((prev) => [
+        ...prev.filter(
+          (o) =>
+            o.id !==
+            nextWithIntelligence.id,
+        ),
+        nextWithIntelligence,
+      ])
+
+      setNotifState((prev) => ({
+        ...prev,
+        [nextWithIntelligence.id]:
+          nextWithIntelligence.notifications.map(
+            (n) => ({
+              ...n,
+            }),
+          ),
+      }))
+
+      setOrgIdState(
+        nextWithIntelligence.id,
+      )
+
+      setBudgetState(
+        nextWithIntelligence.budgetDefault,
+      )
+
+      setObjectiveState("max-reduction")
+      setHasRun(false)
+      setBackendResult(null)
+    },
+    [],
+  )
 
   const setBudget = useCallback(
     (value: number) => {
@@ -219,23 +277,31 @@ export function AppStateProvider({
   )
 
   const runOptimizer = useCallback(() => {
+    if (!org) {
+      return
+    }
+
     setRunning(true)
     setHasRun(false)
 
     try {
-      // Phase 1 local product build: run the same deterministic optimizer
-      // against the expanded local control catalogue. This keeps control
-      // testing independent from the deployed Render service.
-      const result = runOptimization(org, budget, objective)
+      const result = runOptimization(
+        org,
+        budget,
+        objective,
+      )
 
       setBackendResult(result)
       setHasRun(true)
 
       setNotifState((prev) => {
-        const current = prev[org.id] ?? []
+        const current =
+          prev[org.id] ?? []
+
         const entry: OrgNotification = {
           id: "optimization-run",
-          title: "Budget optimization completed",
+          title:
+            "Budget optimization completed",
           message: `Investment Optimizer generated a new plan for ${org.name} within a ${Math.round(
             budget / 100000,
           )}L budget.`,
@@ -244,18 +310,30 @@ export function AppStateProvider({
           read: false,
         }
 
-        const withoutOld = current.filter(
-          (n) => n.id !== "optimization-run",
-        )
+        const withoutOld =
+          current.filter(
+            (n) =>
+              n.id !==
+              "optimization-run",
+          )
 
         return {
           ...prev,
-          [org.id]: [entry, ...withoutOld],
+          [org.id]: [
+            entry,
+            ...withoutOld,
+          ],
         }
       })
     } catch (error) {
-      console.error("RiskOpt optimization error:", error)
-      alert("RiskOpt couldn't run the local optimization engine. Please try again.")
+      console.error(
+        "RiskOpt optimization error:",
+        error,
+      )
+
+      alert(
+        "RiskOpt couldn't run the local optimization engine. Please try again.",
+      )
     } finally {
       setRunning(false)
     }
@@ -320,10 +398,9 @@ export function AppStateProvider({
     running,
     hasRun,
 
-    result:
-      hasRun
-        ? backendResult
-        : null,
+    result: hasRun
+      ? backendResult
+      : null,
 
     runOptimizer,
 
@@ -341,4 +418,4 @@ export function AppStateProvider({
       {children}
     </AppStateContext.Provider>
   )
-}
+} 
